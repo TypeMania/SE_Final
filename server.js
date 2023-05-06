@@ -15,6 +15,6 @@ app.use(require('./routes/api/states.js'));
 app.use(require('./routes/root.js'));
 
 mongoose.connection.once('connected', ()=>{
-    app.listen(80, ()=>console.log('CORS-enabled'))
-    app.listen(process.env.PORT, ()=>console.log('listening'));
+    app.listen(8080, ()=>console.log('CORS-enabled'))
+    app.listen(process.env['PORT'], ()=>console.log('listening'));
 });

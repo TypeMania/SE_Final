@@ -2,11 +2,13 @@ const State = require('../models/States.js');
 const jsonData = require('../public/data/statesData.json');
 const comboData = jsonData;
 const invalid = {message:"Invalid state abbreviation parameter"};
+const {verifyState} = require('../middleware/verifyState.js');
 
 const updateCombo = async () => {
-    comboData.forEach(async stateObj => {
-        const doc = await State.findOne({stateCode: stateObj.code}).exec();
-        stateObj.funfacts = doc.funfacts;
+    const doc = await State.find().exec();
+    comboData.forEach(stateObj => {
+        stateObj.funfacts = doc.find(stateDoc => stateDoc.stateCode===stateObj.code).funfacts;
+        if (!stateObj.funfacts?.length) delete stateObj.funfacts; //pparently we dont want an empty array
     });
     return comboData;
 } 
@@ -17,7 +19,7 @@ const getStates = async (req,res)=>{
     switch(req.query.contig){
         case 'true': getContiguous(req,res); break;
         case 'false': getNoncontiguous(req,res); break;
-        default: res.json(comboData);
+        default: res.status(200).json(comboData);
     }
 }
 
@@ -32,73 +34,110 @@ const getNoncontiguous = async (req,res)=>{
 }
 
 // states/:state
-const getState = async (req,res)=>{
-    const stateObj = comboData.filter(obj => obj.code===req.params['state'].toUpperCase())[0];
-    res.json(stateObj || invalid);
+const getState = async (req,res,next)=>{
+    verifyState(req,res,next);
+    if (req.code) res.json(comboData.find(obj => obj.code===req.code));
 }
 
 // states/:state/capital
-const getCapital = async (req,res)=>{
-    const stateObj = comboData.filter(obj => obj.code===req.params['state'].toUpperCase())[0];
-    res.json(stateObj ? {state: stateObj.state, capital: stateObj.capital_city} : invalid);
+const getCapital = async (req,res,next)=>{
+  verifyState(req,res,next);
+  const stateObj = comboData.find(obj => obj.code===req.code);
+  if (stateObj) res.json({state: stateObj.state, capital: stateObj.capital_city});
 }
 
 // states/:state/nickname
-const getNickname = async (req,res)=>{
-    const stateObj = comboData.filter(obj => obj.code===req.params['state'].toUpperCase())[0];
-    res.json(stateObj ? {state: stateObj.state, nickname: stateObj.nickname} : invalid);
+const getNickname = async (req,res,next)=>{
+  verifyState(req,res,next);
+  const stateObj = comboData.find(obj => obj.code===req.code);
+  if (stateObj) res.json({state: stateObj.state, nickname: stateObj.nickname});
 }
 
 // states/:state/population
-const getPopulation = async (req,res)=>{
-    const stateObj = comboData.filter(obj => obj.code===req.params['state'].toUpperCase())[0];
-    res.json(stateObj ? {state: stateObj.state, population: stateObj.population.toLocaleString()} : invalid);
+const getPopulation = async (req,res,next)=>{
+  verifyState(req,res,next);
+  const stateObj = comboData.find(obj => obj.code===req.code);
+  if (stateObj) res.json({state: stateObj.state, population: stateObj.population.toLocaleString()});;
 }
 
 // states/:state/admission
-const getAdmission = async (req,res)=>{
-    const stateObj = comboData.filter(obj => obj.code===req.params['state'].toUpperCase())[0];
-    res.json(stateObj ? {state: stateObj.state, admitted: stateObj.admission_date} : invalid);
+const getAdmission = async (req,res,next)=>{
+  verifyState(req,res,next);
+  const stateObj = comboData.find(obj => obj.code===req.code);
+  if (stateObj) res.json({state: stateObj.state, admitted: stateObj.admission_date});
 }
 
 // states/:state/funfacts
-const getFunfact = async (req,res)=>{
-    const doc = await State.findOne({stateCode: req.params['state'].toUpperCase()}).exec();
-    if (doc?.funfacts?.at(0)) res.json(doc.funfacts[Math.floor(Math.random()*doc.funfacts.length)]);
-    else res.json({message:"No fun facts for this state or invalid state abbreviation in address"});
+const getFunfact = async (req,res,next)=>{
+  verifyState(req,res,next);
+  const stateObj = comboData.find(obj => obj.code===req.code);
+  if (stateObj?.funfacts?.length > 0) 
+    res.json({funfact: stateObj.funfacts[Math.floor(Math.random()*stateObj.funfacts.length)]});
+  else if (req.code) res.status(404).json({message:`No Fun Facts found for ${stateObj.state}`});
 }
 const postFunfact = async (req,res)=>{
-    const doc = await State.findOne({stateCode: req.params['state'].toUpperCase()}).exec();
-    if (!doc) res.json({message:"Invalid state abbreviation in address."});
-    else if (!req.body.funfacts) res.json({message:"Missing or invalid {funfacts: [\"value\"]} in request body."});
-    else {
-        doc.funfacts = [...doc.funfacts, ...req.body.funfacts];
-        await doc.save();
-        await updateCombo();
-        res.json(doc);
-    }
+  verifyState(req,res);
+  if (!req.body.funfacts) { 
+    res.status(400).json({"message": "State fun facts value required"}); 
+    return;
+  }
+  if (!Array.isArray(req.body.funfacts)) {
+    res.status(400).json({"message": "State fun facts value must be an array"}); 
+    return;
+  }
+  const doc = await State.findOne({stateCode: req.code});
+  doc.funfacts = [...doc.funfacts, ...req.body.funfacts];
+  await doc.save();
+  await updateCombo();
+  res.json(doc);
 }
 const patchFunfact = async (req,res)=>{
-    const doc = await State.findOne({stateCode: req.params['state'].toUpperCase()}).exec();
-    if (!doc) res.json({message:"Invalid state abbreviation in address."});
-    else if (!req.body.index || !req.body.funfact) res.json({message:"Missing required parameter(s) in request body: index or funfact."}); 
-    else if (req.body.index <= doc.funfacts?.length) {
-        doc.funfacts[req.body.index-1] = req.body.funfact;
-        await doc.save();
-        await updateCombo();
-        res.json(doc);
-    }
+  verifyState(req,res);
+  if (!req.body.index){
+    res.status(400).json({"message": "State fun fact index value required"});
+    return;
+  } 
+  if (!req.body.funfact) {
+    res.status(400).json({"message": "State fun fact value required"});
+    return;
+  }
+  if (typeof(req.body.funfact)!=='string') {
+    res.status(400).json({"message": "Invalid fun fact. Must be of type string."});
+    return;
+  }
+  const doc = await State.findOne({stateCode: req.code});
+  if (!doc.funfacts?.length) {
+    res.status(404).json({"message": `No Fun Facts found for ${req.state}`});
+    return;
+  }
+  if (req.body.index <= 0 || req.body.index > doc.funfacts.length) {
+    res.status(404).json({"message": `No Fun Fact found at that index for ${req.state}`});
+    return;
+  }
+  doc.funfacts[req.body.index-1] = req.body.funfact;
+  await doc.save();
+  await updateCombo();
+  res.json(doc);
 }
 const deleteFunfact = async (req,res)=>{
-    const doc = await State.findOne({stateCode: req.params['state'].toUpperCase()}).exec();
-    if (!doc) res.json({message:"Invalid state abbreviation in address."});
-    else if (!req.body.index) res.json({message:"Missing required parameter in request body: index"}); 
-    else if (req.body.index <= doc.funfacts?.length) {
-        doc.funfacts.splice(req.body.index-1, 1);
-        await doc.save();
-        await updateCombo();
-        res.json(doc);
-    }
+  verifyState(req,res);
+  if (!req.body.index){
+    res.status(400).json({"message": "State fun fact index value required"});
+    return;
+  }  
+  const doc = await State.findOne({stateCode: req.code});
+  if (!doc.funfacts?.length) {
+    res.status(404).json({"message": `No Fun Facts found for ${req.state}`});
+    return;
+  }
+  if (req.body.index <= 0 || req.body.index > doc.funfacts.length) {
+    res.status(404).json({"message": `No Fun Fact found at that index for ${req.state}`});
+    return;
+  }
+  doc.funfacts.splice(req.body.index-1,1);
+  await doc.save();
+  await updateCombo();
+  res.json(doc);
 }
 
 module.exports = {
